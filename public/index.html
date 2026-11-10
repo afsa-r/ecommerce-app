@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shop</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1c2430;--mute:#667085;--line:#e3e6eb;--accent:#1f5f5b}
+@media (prefers-color-scheme:dark){:root{--bg:#14181d;--card:#1c2229;--ink:#e8ebef;--mute:#98a2b3;--line:#2c343d;--accent:#5fb3ab}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;justify-content:space-between;align-items:center;padding:14px 24px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px}
+nav{display:flex;gap:6px;flex-wrap:wrap}
+a.nav,button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:6px 12px;border-radius:6px;text-decoration:none}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{color:#b42318}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{max-width:960px;margin:24px auto;padding:0 16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px}
+.price{font-weight:600;font-size:1.15rem}
+.muted{color:var(--mute);font-size:.9rem}
+table{width:100%;border-collapse:collapse}
+td,th{padding:8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+input,select{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);max-width:100%}
+form.stack{display:grid;gap:10px;max-width:340px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:6px;display:none}
+.tbl{overflow-x:auto}
+</style>
+</head>
+<body>
+<header><b>Shop</b><nav id="nav"></nav></header>
+<main id="app"></main>
+<div id="toast" role="status"></div>
+<script>
+const $ = s => document.querySelector(s);
+let token = localStorage.token, user = JSON.parse(localStorage.user || 'null'), cart = JSON.parse(localStorage.cart || '{}'), products = [];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = n => '$' + Number(n).toFixed(2);
+const saveCart = () => localStorage.cart = JSON.stringify(cart);
+function toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(t.h);t.h=setTimeout(()=>t.style.display='none',2800)}
+async function api(path, method='GET', body){
+  const r = await fetch('/api'+path,{method,headers:{'Content-Type':'application/json',...(token&&{Authorization:'Bearer '+token})},body:body&&JSON.stringify(body)});
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok){ if(r.status===401&&token) logout(); throw new Error(d.error||'Request failed'); }
+  return d;
+}
+function logout(){token=user=null;localStorage.removeItem('token');localStorage.removeItem('user');location.hash='#shop';route()}
+const cartCount = () => Object.values(cart).reduce((a,l)=>a+l.qty,0);
+
+function renderNav(){
+  $('#nav').innerHTML = `<a class="nav" href="#shop">Products</a><a class="nav" href="#cart">Cart (${cartCount()})</a>`
+   + (user ? `<a class="nav" href="#orders">My orders</a>${user.role==='admin'?'<a class="nav" href="#admin">Admin</a>':''}<button id="out">Log out (${esc(user.name)})</button>`
+            : `<a class="nav" href="#login">Log in</a>`);
+  if(user) $('#out').onclick = logout;
+}
+
+const views = {
+  async shop(){
+    products = await api('/products');
+    $('#app').innerHTML = '<h2>Products</h2><div class="grid">' + products.map(p => `
+      <div class="card"><h3>${esc(p.name)}</h3><p class="muted">${esc(p.description)}</p>
+      <div class="row"><span class="price">${money(p.price)}</span><span class="muted">${p.stock>0?p.stock+' in stock':'Sold out'}</span></div>
+      <p><button class="primary" data-add="${p.id}" ${p.stock<1?'disabled':''}>Add to cart</button></p></div>`).join('') + '</div>';
+    document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+      const p = products.find(x => x.id == b.dataset.add), l = cart[p.id] || (cart[p.id] = {p, qty:0});
+      if(l.qty >= p.stock) return toast('No more stock available');
+      l.qty++; l.p = p; saveCart(); renderNav(); toast(p.name + ' added');
+    });
+  },
+  cart(){
+    const lines = Object.values(cart), total = lines.reduce((a,l)=>a+l.p.price*l.qty,0);
+    if(!lines.length) return $('#app').innerHTML = '<h2>Your cart</h2><p>Your cart is empty. <a href="#shop">Browse products</a></p>';
+    $('#app').innerHTML = `<h2>Your cart</h2><div class="tbl"><table>` + lines.map(l => `<tr><td>${esc(l.p.name)}</td><td>${money(l.p.price)}</td>
+      <td class="row"><button data-q="${l.p.id}" data-d="-1">-</button>${l.qty}<button data-q="${l.p.id}" data-d="1">+</button></td>
+      <td>${money(l.p.price*l.qty)}</td></tr>`).join('') + `</table></div>
+      <p class="price">Total: ${money(total)}</p><button class="primary" id="co">Place order</button>`;
+    document.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
+      const l = cart[b.dataset.q]; l.qty += +b.dataset.d;
+      if(l.qty<1) delete cart[b.dataset.q];
+      saveCart(); renderNav(); views.cart();
+    });
+    $('#co').onclick = async () => {
+      if(!user){ toast('Log in to place your order'); return location.hash = '#login'; }
+      try{
+        await api('/orders','POST',{items:lines.map(l=>({productId:l.p.id,qty:l.qty}))});
+        cart = {}; saveCart(); renderNav(); toast('Order placed'); location.hash = '#orders';
+      }catch(e){ toast(e.message) }
+    };
+  },
+  login(){
+    $('#app').innerHTML = `<h2 id="t">Log in</h2><form class="stack" id="f"><input id="name" placeholder="Name" autocomplete="name" hidden>
+      <input id="email" type="email" placeholder="Email" autocomplete="email" required>
+      <input id="pw" type="password" placeholder="Password" autocomplete="current-password" required>
+      <button class="primary">Log in</button></form><p><a href="#" id="sw">New here? Create an account</a></p>
+      <p class="muted">Demo admin: admin@shop.com / admin123</p>`;
+    let reg = false;
+    $('#sw').onclick = e => { e.preventDefault(); reg = !reg; $('#name').hidden = !reg; $('#name').required = reg;
+      $('#t').textContent = reg ? 'Create account' : 'Log in'; $('#f button').textContent = reg ? 'Create account' : 'Log in';
+      $('#sw').textContent = reg ? 'Have an account? Log in' : 'New here? Create an account'; };
+    $('#f').onsubmit = async e => { e.preventDefault();
+      try{
+        const d = await api(reg?'/auth/register':'/auth/login','POST',{name:$('#name').value,email:$('#email').value,password:$('#pw').value});
+        token = d.token; user = d.user; localStorage.token = token; localStorage.user = JSON.stringify(user);
+        location.hash = '#shop';
+      }catch(e){ toast(e.message) } };
+  },
+  async orders(){
+    if(!user) return location.hash = '#login';
+    const os = await api('/orders');
+    $('#app').innerHTML = '<h2>My orders</h2>' + (os.length ? os.map(orderCard).join('') : '<p>No orders yet. <a href="#shop">Start shopping</a></p>');
+  },
+  async admin(){
+    if(!user || user.role !== 'admin') return location.hash = '#shop';
+    const [ps, os] = await Promise.all([api('/products'), api('/orders')]);
+    $('#app').innerHTML = `<h2>Products</h2>
+      <form class="row card" id="np"><input id="n" placeholder="Name" required><input id="d" placeholder="Description">
+      <input id="p" type="number" step="0.01" min="0" placeholder="Price" required style="width:100px"><input id="s" type="number" min="0" placeholder="Stock" required style="width:90px">
+      <button class="primary">Add product</button></form>
+      <div class="tbl"><table><tr><th>Name</th><th>Price</th><th>Stock</th><th></th></tr>` + ps.map(p => `<tr><td>${esc(p.name)}</td><td>${money(p.price)}</td><td>${p.stock}</td>
+      <td class="row"><button data-e="${p.id}">Edit price/stock</button><button class="danger" data-x="${p.id}">Delete</button></td></tr>`).join('') + `</table></div>
+      <h2>All orders</h2>` + (os.length ? os.map(o => orderCard(o,true)).join('') : '<p>No orders yet.</p>');
+    $('#np').onsubmit = async e => { e.preventDefault();
+      try{ await api('/products','POST',{name:$('#n').value,description:$('#d').value,price:+$('#p').value,stock:+$('#s').value}); toast('Product added'); views.admin(); }catch(e){toast(e.message)} };
+    document.querySelectorAll('[data-e]').forEach(b => b.onclick = async () => {
+      const p = ps.find(x=>x.id==b.dataset.e), price = prompt('New price', p.price); if(price===null) return;
+      const stock = prompt('New stock', p.stock); if(stock===null) return;
+      try{ await api('/products/'+p.id,'PUT',{price:+price,stock:+stock}); toast('Product updated'); views.admin(); }catch(e){toast(e.message)} });
+    document.querySelectorAll('[data-x]').forEach(b => b.onclick = async () => {
+      if(!confirm('Delete this product?')) return;
+      try{ await api('/products/'+b.dataset.x,'DELETE'); toast('Product deleted'); views.admin(); }catch(e){toast(e.message)} });
+    document.querySelectorAll('[data-st]').forEach(s => s.onchange = async () => {
+      try{ await api(`/orders/${s.dataset.st}/status`,'PATCH',{status:s.value}); toast('Order updated'); }catch(e){toast(e.message)} });
+  }
+};
+
+function orderCard(o, adminView){
+  const st = ['pending','paid','shipped','delivered','cancelled'];
+  return `<div class="card" style="margin-bottom:12px"><div class="row" style="justify-content:space-between">
+    <b>Order #${o.id}</b><span class="muted">${new Date(o.created_at).toLocaleString()}${adminView?' · '+esc(o.email):''}</span></div>
+    <ul>${o.items.map(i=>`<li>${esc(i.name)} × ${i.qty} (${money(i.price)})</li>`).join('')}</ul>
+    <div class="row" style="justify-content:space-between"><span class="price">${money(o.total)}</span>
+    ${adminView ? `<select data-st="${o.id}">${st.map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join('')}</select>` : `<span>Status: <b>${esc(o.status)}</b></span>`}</div></div>`;
+}
+
+async function route(){
+  renderNav();
+  const v = location.hash.slice(1) || 'shop';
+  try{ await (views[v] || views.shop)(); }catch(e){ toast(e.message) }
+}
+addEventListener('hashchange', route);
+route();
+</script>
+</body>
+</html>
